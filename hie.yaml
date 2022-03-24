@@ -1,0 +1,16 @@
+cradle:
+  cabal:
+    - path: "backend/src"
+      component: "lib:backend"
+
+    - path: "common/src"
+      component: "lib:common"
+
+    - path: "frontend/src"
+      component: "lib:frontend"
+
+dependencies:
+  - default.nix
+  - backend/backend.cabal
+  - common/common.cabal
+  - frontend/frontend.cabal
