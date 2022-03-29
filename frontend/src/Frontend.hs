@@ -1,24 +1,23 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Frontend where
 
 import Common.Route
-import Control.Monad.Fix
-import Control.Monad.Trans (liftIO)
-import qualified Data.Text as T
+import Control.Monad.IO.Class (liftIO)
+import Data.List (unfoldr)
 import qualified Data.Map as Map
+import qualified Data.Text as T
 import qualified Data.Time as Time
-import Data.List ( unfoldr )
 import Obelisk.Frontend
-import Obelisk.Generated.Static
 import Obelisk.Route
 import Reflex.Dom.Core
+import GHC.Float (int2Float)
+import Data.Time (secondsToDiffTime, NominalDiffTime)
 
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
@@ -28,52 +27,51 @@ frontend =
   Frontend
     { _frontend_head = do
         el "title" $ text "Obelisk Minimal Example"
-        elAttr "link" ("href" =: $(static "main.css") <> "type" =: "text/css" <> "rel" =: "stylesheet") blank,
+        elAttr "link" ("href" =: "main.css" <> "type" =: "text/css" <> "rel" =: "stylesheet") blank,
       _frontend_body = do
-
         -- from https://github.com/obsidiansystems/obelisk/issues/856
-        el "div" $ do
-          dETick <- prerender (return never) $ do
-            new <- liftIO Time.getCurrentTime
-            eTick <- tickLossy 2 new
-            return $ T.pack . show . _tickInfo_n <$> eTick -- _tickInfo_n <$> -> gets amount of ticks as integer
-          --let (test :: Dynamic t (Event t T.Text)) = dETick
-          dynText =<< (holdDyn "No Ticks Yet" $ switchDyn $ dETick)
-
-        el "div" $ do
-          dETick <- prerender (return never) $ do
-            new <- liftIO Time.getCurrentTime
-            eTick <- tickLossy 2 new
-            return $ getFrameAt testMovement <$> (_tickInfo_n <$> eTick) 
-          --let (test :: Dynamic t (Event t (Map.Map T.Text T.Text))) = dETick
-          -- holdDyn :: a -> Event t a -> m (Dynamic t a) 
-          -- switchDyn :: Dynamic t (Event t a) -> Event t a 
-          -- elDynAttr ::  Text -> Dynamic t (Map Text Text) -> m a -> m a
-          let (kkr1 :: Dynamic t (Map.Map T.Text T.Text) -> m a -> m a) = elDynAttr "circle"
-          let (kanker :: _) = elDynAttr "circle" =<< (holdDyn (Map.empty :: Map.Map T.Text T.Text) $ switchDyn dETick) 
-          return ()
-        
-        rec el "div" $ text "Counter as fold"
-            numbs <- foldDyn (+) (0 :: Int)  (1 <$ evIncr)
-            el "div" $ display numbs
+        {--
+        el "h2" $ text "Using foldDyn with function application"
+        rec dynNum <- foldDyn ($) (0 :: Int) $ leftmost [(+ 1) <$ evIncr, (+ (-1)) <$ evDecr, const 0 <$ evReset]
+            let currAttr = getFrameAt testMovement <$> dynNum
+            svg 1000 750 $ do
+              elDynAttr "circle" currAttr blank
             evIncr <- button "Increment"
+            evDecr <- button "Decrement"
+            evReset <- button "Reset"
         return ()
+        --}
+        svg 1000 750 $ do
+          moveCircle mov1
+          moveCircle mov2
+          moveCircle mov3
+
     }
 
-
-emptyVal :: Map.Map T.Text T.Text
-emptyVal = Map.empty
+moveCircle ::
+  (PostBuild t m, DomBuilder t m, Prerender t m, MonadHold t m) =>
+  Movement ->
+  m ()
+moveCircle mov =
+  do
+      dETick <- prerender (return never) $ do
+        new <- liftIO Time.getCurrentTime
+        eTick <- tickLossy 0.033 new -- TODO: make this variable with frames per second
+        return $ getFrameAt mov . fromInteger <$> (_tickInfo_n <$> eTick)
+      let circleTrajectory = holdDyn Map.empty $ switchDyn dETick
+      let dynCircle d = elDynAttr "circle" d blank
+      dynCircle =<< circleTrajectory
 
 svg :: (DomBuilder t m) => Int -> Int -> m a2 -> m a2
-svg h w = elAttr "svg" ("width" =: (toText h) <> "height" =: (toText w)) 
+svg h w = elAttr "svg" ("width" =: (toText h) <> "height" =: (toText w))
 
 circle :: (DomBuilder t m) => Int -> Point -> m a -> m a
-circle r p = elAttr "circle" (circleAttr r p) 
+circle r p = elAttr "circle" (circleAttr r p)
 
 data Player = One
   deriving (Show)
 
-type Seconds = Float
+type Seconds = Int
 
 type Point = (Float, Float)
 
@@ -91,21 +89,29 @@ data Movement = Movement
   }
   deriving (Show)
 
-
 -- Draw calculations
 toText :: (Show a) => a -> T.Text
-toText =  T.pack . show
+toText = T.pack . show
 
 circleAttr :: Int -> Point -> Map.Map T.Text T.Text
-circleAttr r (x,y) = "cx" =: toText x <> "cy" =: toText y<> "r" =: toText r <> "fill" =: "yellow"
+circleAttr r (x, y) = "cx" =: toText x <> "cy" =: toText y <> "r" =: toText r <> "fill" =: "black"
 
 -- Movement calculations
--- 
-testArrow :: Arrow
-testArrow = Arrow {start = (100,100), end = (500,500)}
+--
+mkArrow :: Point -> Point -> Arrow
+mkArrow p1 p2 = Arrow {start = p1, end = p2}
 
-testMovement :: Movement
-testMovement = Movement {player = One, arrow = testArrow, startTime = 2, endTime = 8}
+mkMovement :: Arrow -> Seconds -> Seconds -> Movement
+mkMovement a beginT endT = Movement {player = One, arrow = a, startTime = beginT, endTime = endT}
+
+mov1 :: Movement
+mov1 = mkMovement (mkArrow (100,100) (500,500)) 1 6
+mov2 :: Movement
+mov2 = mkMovement (mkArrow (100,100) (100,500)) 0 10
+mov3 :: Movement
+mov3 = mkMovement (mkArrow (500,100) (100,500)) 0 3
+
+
 
 addPoint :: Point -> Point -> Point
 addPoint (x1, y1) (x2, y2) = (x1 + x2, y1 + y2)
@@ -113,33 +119,37 @@ addPoint (x1, y1) (x2, y2) = (x1 + x2, y1 + y2)
 diff :: Point -> Point -> Point
 diff (x1, y1) (x2, y2) = (x2 - x1, y2 - y1)
 
-divPoint :: Point -> Float -> Point
-divPoint (x, y) n = (x / n, y / n)
+divPoint :: Point -> Int -> Point
+divPoint (x, y) n = let n' = int2Float n in (x / n', y / n')
 
-stepSize :: Movement -> Float -> (Float, Float)
+stepSize :: Movement -> Int -> (Float, Float)
 stepSize mov travTime = diff (start (arrow mov)) (end (arrow mov)) `divPoint` travTime
 
--- renders a list of points where the circle is at each moment in time 
--- from it's starting time to it's end time with intervals of 1 second
+-- framesPerSecond :: Int
+framesPerSecond = 30
+
+-- renders a list of 'frames' (= position on x and y axes of circle at moment in time)
+-- from it's starting frame to it's end frame with 30 frames per second
 renderFrames :: Movement -> [Point]
 renderFrames mov =
-  let
-      travelTime = endTime mov - startTime mov
-      startP = start (arrow mov)
-      endP = end (arrow mov)
-      step = stepSize mov travelTime
-      getNext point
-        | nextPoint < endP = Just (point, nextPoint)
-        | otherwise = Nothing
+  let  
+      framesPerSecond = framesPerSecond
+      stationaryFrames = replicate (startTime mov * framesPerSecond) (start $ arrow mov)
+      nOfFrames = (endTime mov - startTime mov) * framesPerSecond
+      startFrame = start (arrow mov)
+      endFrame = end (arrow mov)
+      step = stepSize mov nOfFrames
+      getNext frame
+        | endFrameIsPassed frame nextFrame = Nothing
+        | otherwise = Just (frame, nextFrame) -- TODO cant compare points this way
         where
-            nextPoint = point `addPoint` step
-   in unfoldr getNext startP ++ [endP]
+          endFrameIsPassed p1 p2  = undefined -- calculate rectange and check wether endframe lies withing
+          nextFrame = frame `addPoint` step
+   in stationaryFrames ++ unfoldr getNext startFrame ++ [endFrame]
 
 -- Calculate attributes of cicle at given frame
-getFrameAt :: Movement -> Integer -> Map.Map T.Text T.Text
-getFrameAt mov posIntegral =
-    let
-        allFrames = renderFrames mov
-        pos = fromIntegral posIntegral
-        currFrame = if length allFrames > pos then allFrames !! pos else last allFrames
-    in circleAttr 10 currFrame
+getFrameAt :: Movement -> Int -> Map.Map T.Text T.Text
+getFrameAt mov frameN =
+  let allFrames = renderFrames mov 
+      currFrame = if length allFrames > frameN then allFrames !! frameN else last allFrames
+   in circleAttr 10 currFrame
