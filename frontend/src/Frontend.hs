@@ -5,6 +5,7 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 module Frontend where
 
@@ -17,7 +18,6 @@ import GHC.Float (float2Int, int2Float)
 import Obelisk.Frontend
 import Obelisk.Route
 import Reflex.Dom.Core
-import Control.Monad (join)
 
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
@@ -29,38 +29,12 @@ frontend =
         el "title" $ text "Obelisk Minimal Example"
         elAttr "link" ("href" =: "main.css" <> "type" =: "text/css" <> "rel" =: "stylesheet") blank,
       _frontend_body = do
-        -- from https://github.com/obsidiansystems/obelisk/issues/856
-        {--
-        el "h2" $ text "Using foldDyn with function application"
-        rec dynNum <- foldDyn ($) (0 :: Int) $ leftmost [(+ 1) <$ evIncr, (+ (-1)) <$ evDecr, const 0 <$ evReset]
-            let currAttr = getFrameAt testMovement <$> dynNum
-            svg 1000 750 $ do
-              elDynAttr "circle" currAttr blank
-            evIncr <- button "Increment"
-            evDecr <- button "Decrement"
-            evReset <- button "Reset"
-        return ()
-        --}
         prerender_ blank $ renderView
         blank
-        {--
-        let speedF = 1
-        svg 1000 750 $ do
-          moveCircle speedF mov1
-          moveCircle speedF mov2
-          moveCircle speedF mov3
-          moveCircle speedF mov4
-          moveCircle speedF mov5--}
     }
 
-
-f1 :: (DomBuilder t m, PostBuild t m) => Dynamic t (Map.Map T.Text T.Text) -> m (Element EventResult (DomBuilderSpace m) t, ())
-f1 m = elDynSvgAttr "circle" m blank
-
-
-
-
-renderView :: (MonadWidget t m, DomBuilder t m) =>  m ()
+-- Renders the complete basketball court, players and controls
+renderView :: (MonadWidget t m) =>  m ()
 renderView = do
         let speedFactor = 2 -- todo make this configurable
         -- here we keep the fps constant at 30 regardless of the 'speedFactor'
@@ -70,13 +44,14 @@ renderView = do
         rec
           t0 <- liftIO Time.getCurrentTime
           eTick <- tickLossy speed t0
-          trajectories <- mapM (renderMovements fps eStart ePause eTick) [mov1,mov2,mov3,mov4,mov5]
+          movements <- mapM (renderMovements fps eStart ePause eTick) [mov1,mov2,mov3,mov4,mov5]
           svgBody 1000 750 $ do
-            mapM (\m -> elDynSvgAttr "circle" m blank) trajectories
+            mapM (\m -> elDynSvgAttr "circle" m blank) movements
           eStart <- button "Start"
           ePause <- button "Reset"
         return ()
 
+-- creates 1 dynamic map linked to the ticks and start & reset button
 renderMovements :: (DomBuilder t m, MonadWidget t m) => Int -> Event t () -> Event t () -> Event t TickInfo -> Movement -> m (Dynamic t (Map.Map T.Text T.Text))
 renderMovements fps eStart ePause eTick mov = do
   beStartStop <- hold never . leftmost $ [ (const 0 <$ eTick) <$ ePause, ((1+) <$ eTick) <$ eStart ]
@@ -85,28 +60,6 @@ renderMovements fps eStart ePause eTick mov = do
 
 toNDT :: (Real a) => a -> Time.NominalDiffTime
 toNDT = fromRational . toRational
-
--- given a speedFactor e.g. 0.5 is half speed, 2 is double speed
--- and a movement we can move a circle over a canvas
-moveCircle ::
-  (PostBuild t m, DomBuilder t m, Prerender t m, MonadHold t m) =>
-  Float ->
-  Movement ->
-  m ()
-moveCircle speedFactor mov =
-  do
-    dETick <- prerender (return never) $ do
-      new <- liftIO Time.getCurrentTime
-      eTick <- tickLossy speed new
-      return $ getFrameAt mov fps . fromInteger <$> (_tickInfo_n <$> eTick)
-    let circleTrajectory = holdDyn Map.empty $ switchDyn dETick
-    let dynCircle d = elDynAttr "circle" d blank
-    dynCircle =<< circleTrajectory
-  where
-    -- here we keep the fps constant at 30 regardless of the 'speedFactor'
-    -- e.g. 2 seconds playtime at 0.5 speed and 30 fps is  2/0.5*30=120 fps
-    fps = float2Int (1 / speedFactor * 30)
-    speed = 1 / (toNDT speedFactor * toNDT fps)
 
 -- Draw calculations
 
@@ -126,6 +79,10 @@ toText = T.pack . show
 
 circleAttr :: Int -> Point -> Map.Map T.Text T.Text
 circleAttr r (x, y) = "cx" =: toText x <> "cy" =: toText y <> "r" =: toText r <> "fill" =: "black"
+
+-------------------------
+-- Movement calculations-
+-------------------------
 
 data Player = One
   deriving (Show)
@@ -148,9 +105,7 @@ data Movement = Movement
   }
   deriving (Show)
 
--------------------------
--- Movement calculations-
--------------------------
+
 mkArrow :: Point -> Point -> Arrow
 mkArrow p1 p2 = Arrow {start = p1, end = p2}
 
@@ -171,9 +126,6 @@ mov4 = mkMovement (mkArrow (300, 500) (300, 100)) 0 5
 
 mov5 :: Movement
 mov5 = mkMovement (mkArrow (600, 100) (100, 500)) 0 5
-
-addPoint :: Point -> Point -> Point
-addPoint (x1, y1) (x2, y2) = (x1 + x2, y1 + y2)
 
 -- Difference between 2 points
 diff :: Point -> Point -> Point
