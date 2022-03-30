@@ -41,38 +41,36 @@ frontend =
             evReset <- button "Reset"
         return ()
         --}
-        prerender_ blank $ timerWidget 10
-
+        prerender_ blank $ timerWidget
+        blank
+        {--
         let speedF = 1
         svg 1000 750 $ do
           moveCircle speedF mov1
           moveCircle speedF mov2
           moveCircle speedF mov3
           moveCircle speedF mov4
-          moveCircle speedF mov5
+          moveCircle speedF mov5--}
     }
 
-timerWidget :: MonadWidget t m => Integer -> m ()
-timerWidget maxTime = do
-  t0 <- liftIO Time.getCurrentTime
-  eStart <- button "Start"
-  ePause <- button "Reset"
-  eTick <- tickLossy 1.0 t0
-  let dTimer' = timer' maxTime eStart ePause eTick
-  dynText =<< dTimer'
+timerWidget :: MonadWidget t m =>  m ()
+timerWidget = do
+        rec
+          t0 <- liftIO Time.getCurrentTime
+          eTick <- tickLossy 1.0 t0
+          circleTrajectory <- timer' eStart ePause eTick
+          svgBody 1000 750 $ do
+            elSvgAttr "circle" circleTrajectory blank
+          eStart <- button "Start"
+          ePause <- button "Reset"
+        return ()
 
-timer' :: MonadWidget t m => Integer -> Event t () -> Event t () -> Event t TickInfo -> m (Dynamic t T.Text)
-timer' maxTime eStart ePause eTick = do
+
+timer' :: MonadWidget t m => Event t () -> Event t () -> Event t TickInfo -> m (Dynamic t (Map.Map T.Text T.Text))
+timer' eStart ePause eTick = do
   beStartStop <- hold never . leftmost $ [ (const 0 <$ eTick) <$ ePause, ((1+) <$ eTick) <$ eStart ]
   let eSwitch = switch beStartStop
-  fmap (formatS maxTime) <$> foldDyn ($) 0 eSwitch
-
-formatS :: Integer -> Integer -> T.Text
-formatS max cur =
-  case properFraction (fromInteger (max-cur) / 60) of
-    (mins, s) ->  let secs = round (s * 60) in
-      T.pack $ fill mins <> ":" <> fill secs where
-        fill n = if n `elem` [0..9] then "0" <> show n else show n
+  fmap (getFrameAt mov1 3) <$> foldDyn ($) 0 eSwitch
 
 toNDT :: (Real a) => a -> Time.NominalDiffTime
 toNDT = fromRational . toRational
@@ -100,8 +98,17 @@ moveCircle speedFactor mov =
     speed = 1 / (toNDT speedFactor * toNDT fps)
 
 -- Draw calculations
-svg :: (DomBuilder t m) => Int -> Int -> m a2 -> m a2
-svg h w = elAttr "svg" ("width" =: (toText h) <> "height" =: (toText w))
+
+-- using elDynAttrNS' to build svg in prerender (https://github.com/obsidiansystems/obelisk/issues/828)
+elSvgAttr  :: (DomBuilder t m, PostBuild t m)
+  => T.Text
+  -> Dynamic t (Map.Map T.Text T.Text)
+  -> m a
+  -> m (Element EventResult (DomBuilderSpace m) t, a)
+elSvgAttr = elDynAttrNS' (Just "http://www.w3.org/2000/svg")  
+
+svgBody :: (DomBuilder t m, PostBuild t m) => Int -> Int -> m a3 -> m (Element EventResult (DomBuilderSpace m) t, a3)
+svgBody h w = elSvgAttr "svg" $ constDyn $ "width" =: toText h <> "height" =: toText w
 
 circle :: (DomBuilder t m) => Int -> Point -> m a -> m a
 circle r p = elAttr "circle" (circleAttr r p)
