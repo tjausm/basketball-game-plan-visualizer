@@ -12,7 +12,7 @@ import Control.Monad.IO.Class (liftIO)
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Time as Time
-import GHC.Float (int2Float)
+import GHC.Float (float2Int, int2Float)
 import Obelisk.Frontend
 import Obelisk.Route
 import Reflex.Dom.Core
@@ -48,21 +48,30 @@ frontend =
           moveCircle speedF mov5
     }
 
+toNDT :: (Real a) => a -> Time.NominalDiffTime
+toNDT = fromRational . toRational
+
+-- given a speedFactor e.g. 0.5 is half speed, 2 is double speed
+-- and a movement we can move a circle over a canvas
 moveCircle ::
   (PostBuild t m, DomBuilder t m, Prerender t m, MonadHold t m) =>
-  Float -> Movement ->
+  Float ->
+  Movement ->
   m ()
 moveCircle speedFactor mov =
   do
     dETick <- prerender (return never) $ do
       new <- liftIO Time.getCurrentTime
-      eTick <- tickLossy speed new -- TODO: make this variable with frames per second
-      return $ getFrameAt mov . fromInteger <$> (_tickInfo_n <$> eTick)
+      eTick <- tickLossy speed new 
+      return $ getFrameAt mov fps . fromInteger <$> (_tickInfo_n <$> eTick)
     let circleTrajectory = holdDyn Map.empty $ switchDyn dETick
     let dynCircle d = elDynAttr "circle" d blank
     dynCircle =<< circleTrajectory
-    where
-      speed = 1 / (fromRational (toRational speedFactor) * 30)
+  where
+    -- here we keep the fps constant at 30 regardless of the 'speedFactor'
+    -- e.g. 2 seconds playtime at 0.5 speed and 30 fps is  2/0.5*30=120 fps
+    fps = float2Int (1 / speedFactor * 30)
+    speed = 1 / (toNDT speedFactor * toNDT fps)
 
 -- Draw calculations
 svg :: (DomBuilder t m) => Int -> Int -> m a2 -> m a2
@@ -76,7 +85,6 @@ toText = T.pack . show
 
 circleAttr :: Int -> Point -> Map.Map T.Text T.Text
 circleAttr r (x, y) = "cx" =: toText x <> "cy" =: toText y <> "r" =: toText r <> "fill" =: "black"
-
 
 data Player = One
   deriving (Show)
@@ -99,7 +107,6 @@ data Movement = Movement
   }
   deriving (Show)
 
-
 -------------------------
 -- Movement calculations-
 -------------------------
@@ -119,7 +126,7 @@ mov3 :: Movement
 mov3 = mkMovement (mkArrow (500, 100) (100, 500)) 0 3
 
 mov4 :: Movement
-mov4 = mkMovement (mkArrow (300, 100) (300, 500)) 3 0
+mov4 = mkMovement (mkArrow (300, 500) (300, 100)) 0 5
 
 mov5 :: Movement
 mov5 = mkMovement (mkArrow (600, 100) (100, 500)) 0 5
@@ -139,13 +146,13 @@ divPoint (x, y) n = let n' = int2Float n in (x / n', y / n')
 stepSize :: Movement -> Int -> Point
 stepSize mov travTime = diff (start (arrow mov)) (end (arrow mov)) `divPoint` travTime
 
-framesPerSecond :: Int
-framesPerSecond = 60
+--framesPerSecond :: Int
+--framesPerSecond = 60
 
 -- renders a list of 'frames' (= position on x and y axes of circle at moment in time)
 -- from it's starting frame to it's end frame with 30 frames per second
-renderFrames :: Movement -> [Point]
-renderFrames mov =
+renderFrames :: Movement -> Int -> [Point]
+renderFrames mov framesPerSecond =
   let stationaryFrames = replicate (startTime mov * framesPerSecond) (start $ arrow mov)
       nOfFrames = ((endTime mov - startTime mov) * framesPerSecond) - 2 -- leave 2 frames for begin and end frame
       (xStart, yStart) = start (arrow mov)
@@ -153,8 +160,8 @@ renderFrames mov =
    in stationaryFrames ++ [(xStart + i * xStep, yStart + yStep * i) | i <- [0 .. (int2Float nOfFrames)]] ++ [end (arrow mov)]
 
 -- Calculate attributes of cicle at given frame
-getFrameAt :: Movement -> Int -> Map.Map T.Text T.Text
-getFrameAt mov frameN =
-  let allFrames = renderFrames mov
+getFrameAt :: Movement -> Int -> Int -> Map.Map T.Text T.Text
+getFrameAt mov framesPerSecond frameN =
+  let allFrames = renderFrames mov framesPerSecond
       currFrame = if length allFrames > frameN then allFrames !! frameN else last allFrames
    in circleAttr 10 currFrame
