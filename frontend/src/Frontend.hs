@@ -41,7 +41,7 @@ frontend =
             evReset <- button "Reset"
         return ()
         --}
-        prerender_ blank $ timerWidget
+        prerender_ blank $ renderView
         blank
         {--
         let speedF = 1
@@ -53,24 +53,35 @@ frontend =
           moveCircle speedF mov5--}
     }
 
-timerWidget :: MonadWidget t m =>  m ()
-timerWidget = do
+
+f1 :: (DomBuilder t m, PostBuild t m) => Dynamic t (Map.Map T.Text T.Text) -> m (Element EventResult (DomBuilderSpace m) t, ())
+f1 m = elDynSvgAttr "circle" m blank
+
+
+
+
+renderView :: (MonadWidget t m, DomBuilder t m) =>  m ()
+renderView = do
+        let speedFactor = 2 -- todo make this configurable
+        -- here we keep the fps constant at 30 regardless of the 'speedFactor'
+        -- e.g. 2 seconds playtime at 0.5 speed and 30 fps is  2/0.5*30=120 fps
+        let fps = float2Int (1 / speedFactor * 30)
+        let speed = 1 / (toNDT speedFactor * toNDT fps)
         rec
           t0 <- liftIO Time.getCurrentTime
-          eTick <- tickLossy 1.0 t0
-          circleTrajectory <- timer' eStart ePause eTick
+          eTick <- tickLossy speed t0
+          trajectories <- mapM (renderMovements fps eStart ePause eTick) [mov1,mov2,mov3,mov4,mov5]
           svgBody 1000 750 $ do
-            elSvgAttr "circle" circleTrajectory blank
+            mapM (\m -> elDynSvgAttr "circle" m blank) trajectories
           eStart <- button "Start"
           ePause <- button "Reset"
         return ()
 
-
-timer' :: MonadWidget t m => Event t () -> Event t () -> Event t TickInfo -> m (Dynamic t (Map.Map T.Text T.Text))
-timer' eStart ePause eTick = do
+renderMovements :: (DomBuilder t m, MonadWidget t m) => Int -> Event t () -> Event t () -> Event t TickInfo -> Movement -> m (Dynamic t (Map.Map T.Text T.Text))
+renderMovements fps eStart ePause eTick mov = do
   beStartStop <- hold never . leftmost $ [ (const 0 <$ eTick) <$ ePause, ((1+) <$ eTick) <$ eStart ]
   let eSwitch = switch beStartStop
-  fmap (getFrameAt mov1 3) <$> foldDyn ($) 0 eSwitch
+  fmap (getFrameAt mov fps) <$> foldDyn ($) 0 eSwitch
 
 toNDT :: (Real a) => a -> Time.NominalDiffTime
 toNDT = fromRational . toRational
@@ -100,18 +111,15 @@ moveCircle speedFactor mov =
 -- Draw calculations
 
 -- using elDynAttrNS' to build svg in prerender (https://github.com/obsidiansystems/obelisk/issues/828)
-elSvgAttr  :: (DomBuilder t m, PostBuild t m)
+elDynSvgAttr  :: (DomBuilder t m, PostBuild t m)
   => T.Text
   -> Dynamic t (Map.Map T.Text T.Text)
   -> m a
   -> m (Element EventResult (DomBuilderSpace m) t, a)
-elSvgAttr = elDynAttrNS' (Just "http://www.w3.org/2000/svg")  
+elDynSvgAttr = elDynAttrNS' (Just "http://www.w3.org/2000/svg")
 
 svgBody :: (DomBuilder t m, PostBuild t m) => Int -> Int -> m a3 -> m (Element EventResult (DomBuilderSpace m) t, a3)
-svgBody h w = elSvgAttr "svg" $ constDyn $ "width" =: toText h <> "height" =: toText w
-
-circle :: (DomBuilder t m) => Int -> Point -> m a -> m a
-circle r p = elAttr "circle" (circleAttr r p)
+svgBody h w = elDynSvgAttr "svg" $ constDyn $ "width" =: toText h <> "height" =: toText w
 
 toText :: (Show a) => a -> T.Text
 toText = T.pack . show
