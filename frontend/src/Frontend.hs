@@ -4,6 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MonoLocalBinds #-}
 
 module Frontend where
 
@@ -16,6 +17,7 @@ import GHC.Float (float2Int, int2Float)
 import Obelisk.Frontend
 import Obelisk.Route
 import Reflex.Dom.Core
+import Control.Monad (join)
 
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
@@ -39,7 +41,9 @@ frontend =
             evReset <- button "Reset"
         return ()
         --}
-        let speedF = 0.5
+        prerender_ blank $ timerWidget 10
+
+        let speedF = 1
         svg 1000 750 $ do
           moveCircle speedF mov1
           moveCircle speedF mov2
@@ -47,6 +51,28 @@ frontend =
           moveCircle speedF mov4
           moveCircle speedF mov5
     }
+
+timerWidget :: MonadWidget t m => Integer -> m ()
+timerWidget maxTime = do
+  t0 <- liftIO Time.getCurrentTime
+  eStart <- button "Start"
+  ePause <- button "Reset"
+  eTick <- tickLossy 1.0 t0
+  let dTimer' = timer' maxTime eStart ePause eTick
+  dynText =<< dTimer'
+
+timer' :: MonadWidget t m => Integer -> Event t () -> Event t () -> Event t TickInfo -> m (Dynamic t T.Text)
+timer' maxTime eStart ePause eTick = do
+  beStartStop <- hold never . leftmost $ [ (const 0 <$ eTick) <$ ePause, ((1+) <$ eTick) <$ eStart ]
+  let eSwitch = switch beStartStop
+  fmap (formatS maxTime) <$> foldDyn ($) 0 eSwitch
+
+formatS :: Integer -> Integer -> T.Text
+formatS max cur =
+  case properFraction (fromInteger (max-cur) / 60) of
+    (mins, s) ->  let secs = round (s * 60) in
+      T.pack $ fill mins <> ":" <> fill secs where
+        fill n = if n `elem` [0..9] then "0" <> show n else show n
 
 toNDT :: (Real a) => a -> Time.NominalDiffTime
 toNDT = fromRational . toRational
@@ -62,7 +88,7 @@ moveCircle speedFactor mov =
   do
     dETick <- prerender (return never) $ do
       new <- liftIO Time.getCurrentTime
-      eTick <- tickLossy speed new 
+      eTick <- tickLossy speed new
       return $ getFrameAt mov fps . fromInteger <$> (_tickInfo_n <$> eTick)
     let circleTrajectory = holdDyn Map.empty $ switchDyn dETick
     let dynCircle d = elDynAttr "circle" d blank
