@@ -30,27 +30,24 @@ frontend =
         el "title" $ text "Obelisk Minimal Example"
         elAttr "link" ("href" =: "main.css" <> "type" =: "text/css" <> "rel" =: "stylesheet") blank,
       _frontend_body = do
-        prerender_ blank renderView
+        prerender_ blank (renderView [mov1, mov2, mov3, mov5])
 
         blank
     }
 
 -- Renders the complete basketball court, players and controls
-renderView :: (MonadWidget t m) => m ()
-renderView = do
-  let movList = [mov1, mov2, mov3, mov5] -- TODO make configurable
-  -- here we keep the fps constant at 30 regardless of the 'speedFactor'
-  -- e.g. 2 seconds playtime at 0.5 speed and 30 fps is  2/0.5*30=120 fps
-  let speedFactor = 2 -- todo make this configurable
-  let fps = float2Int (1 / speedFactor * 30)
-  let speed = 1 / (toNDT speedFactor * toNDT fps)
+renderView :: (MonadWidget t m) => [Movement] -> m ()
+renderView movements = do
+
+  let fps = 30
+
   rec t0 <- liftIO Time.getCurrentTime
-      eTick <- tickLossy speed t0
-      let arrows = map arrow movList
-      movements <- mapM (renderMovements fps eStart ePause eReset eTick) movList
+      eTick <- tickLossy (1 / toNDT fps) t0
+      let arrows = map arrow movements
+      renderedMovements <- mapM (renderMovements fps eStart ePause eReset eTick) movements
       svgBBalCourt $ do
         mapM_ drawArrow arrows
-        mapM (\m -> elDynSvgAttr "circle" m blank) movements
+        (mapM (\m -> elDynSvgAttr "circle" m blank) renderedMovements :: _)
       eStart <- button "Start"
       ePause <- button "Pause"
       eReset <- button "Reset"
@@ -67,13 +64,11 @@ toNDT :: (Real a) => a -> Time.NominalDiffTime
 toNDT = fromRational . toRational
 
 -- Draw calculations
-
--- using elDynAttrNS' to build svg in prerender (https://github.com/obsidiansystems/obelisk/issues/828)
-
 type Height = Int
 
 type Width = Int
 
+-- using elDynAttrNS' to build svg in prerender (https://github.com/obsidiansystems/obelisk/issues/828)
 elDynSvgAttr ::
   (DomBuilder t m, PostBuild t m) =>
   T.Text ->
@@ -150,10 +145,10 @@ mkMovement :: Arrow -> Seconds -> Seconds -> Movement
 mkMovement a beginT endT = Movement {player = Player "One", arrow = a, startTime = if beginT > endT then endT else beginT, endTime = endT}
 
 mov1 :: Movement
-mov1 = mkMovement One  1 6
+mov1 = mkMovement One 1 6
 
 mov2 :: Movement
-mov2 = mkMovement Two  0 10
+mov2 = mkMovement Two 0 10
 
 mov3 :: Movement
 mov3 = mkMovement Three 0 3
