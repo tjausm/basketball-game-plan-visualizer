@@ -14,9 +14,7 @@ import Control.Monad.IO.Class (liftIO)
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Time as Time
-import GHC.Float (float2Int, int2Float)
 import Obelisk.Frontend
-import Obelisk.Generated.Static (static)
 import Obelisk.Route
 import Reflex.Dom.Core
 
