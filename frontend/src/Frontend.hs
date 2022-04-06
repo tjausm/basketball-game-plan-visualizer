@@ -17,8 +17,8 @@ frontend =
       _frontend_body = do
 
         -- pass a [Movement] here and the render function takes care of the rest
-        prerender_ blank (GameplanViewer.render GameplanViewer.exampleAnimation)
-        
+        prerender_ blank GameplanViewer.example
+
         blank
     }
 

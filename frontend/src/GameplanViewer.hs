@@ -3,7 +3,7 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
-module GameplanViewer (render, mkMovement, Arrow(One, Two, Three, Four), exampleAnimation) where
+module GameplanViewer (example, render, Movement(..), Player(..), Arrow(..)) where
 
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.Map as Map
@@ -11,6 +11,28 @@ import qualified Data.Text as T
 import qualified Data.Time as Time
 import GHC.Float (float2Int, int2Float)
 import Reflex.Dom.Core
+import Prelude
+
+-------------------
+-- Example usage --
+-------------------
+example :: (((Monad m, Prerender t m))) => m ()
+example = do
+        
+        -- generate some movements
+        let mkMovement a beginT endT = Movement {player = Player "One", arrow = a, startTime = if beginT > endT then endT else beginT, endTime = endT}
+        let exampleAnimation = [
+                  mkMovement  (Arrow "" (800, 1100) (800, 300)) 1 6, 
+                  mkMovement (Arrow "" (200, 300) (400, 200)) 0 10, 
+                  mkMovement (Arrow "" (200, 500) (500, 300)) 0 3, 
+                  mkMovement (Arrow "" (400, 1200) (500, 700)) 0 5]
+
+        -- pass a [Movement] here and the render function takes care of the rest
+        prerender_ blank (GameplanViewer.render exampleAnimation)
+
+------------------------
+-- Rendering functions--
+------------------------
 
 -- Renders the complete basketball court, players and controls
 render :: (MonadWidget t m) => [Movement] -> m ()
@@ -35,7 +57,8 @@ render movements = do
           drawBBCourt viewWidth viewHeight
 
       -- draw the start, pause and reset button
-      (eStart, ePause, eReset) <-
+      (eStart, ePause, eReset) <- -- m ()
+      -- m ()
         rowCenter $ do
           colCenter 12 $ do
             s <- playButton
@@ -45,7 +68,7 @@ render movements = do
 
   blank
 
--- creates 1 dynamic map linked to the ticks and start & reset button
+-- creates 1 dynamic map linked to the ticks and start& reset button
 renderMovements :: (DomBuilder t m, MonadWidget t m) => Int -> Event t () -> Event t () -> Event t () -> Event t TickInfo -> Movement -> m (Dynamic t (Map.Map T.Text T.Text))
 renderMovements framesPerSecond eStart ePause eReset eTick mov = do
   beStartStop <- hold never . leftmost $ [((1 +) <$ eTick) <$ eStart, ((0 +) <$ eTick) <$ ePause, (const 0 <$ eTick) <$ eReset]
@@ -55,9 +78,9 @@ renderMovements framesPerSecond eStart ePause eReset eTick mov = do
 toNDT :: (Real a) => a -> Time.NominalDiffTime
 toNDT = fromRational . toRational
 
-----------------
+----------------------------
 -- UI & bootstrap elements--
-----------------
+----------------------------
 importBootstrap :: (DomBuilder t m) => m ()
 importBootstrap = elAttr "link" ("href" =: "https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" <> "rel" =: "stylesheet") blank
 
@@ -97,6 +120,9 @@ type Color = T.Text
 -- Constant values of drawables & animations
 scale :: Float -> Int
 scale i = let conScale = 0.65 in float2Int $ i * conScale
+
+scalePoint :: Point -> Point
+scalePoint (x,y) = let scale' = int2Float . scale in (scale' x, scale' y) 
 
 viewWidth :: Width
 viewWidth = scale 1000
@@ -140,7 +166,7 @@ drawLine strokeWidth (x1, y1) (x2, y2) otherAttrs = elDynSvgAttr "line" (constDy
 
 drawArrow :: (DomBuilder t m, PostBuild t m) => Arrow -> m (Element EventResult (DomBuilderSpace m) t, ())
 drawArrow a = do
-  let (p1, p2) = getPoints a
+  let (p1, p2) = (start a, end a)
   elDynSvgAttr "marker" (constDyn $ "id" =: "triangle" <> "viewBox" =: "0 0 10 10" <> "markerUnits" =: "strokeWidth" <> "markerWidth" =: "4" <> "markerHeight" =: "3" <> "refX" =: "0" <> "refY" =: "5" <> "orient" =: "auto") $ do
     elDynSvgAttr "path" (constDyn $ "d" =: "M 0 0 L 10 5 L 0 10 z") blank
   elAttr "polygon" ("points" =: "0 0, 10 3.5, 0 7") blank
@@ -168,26 +194,8 @@ type Point = (Float, Float)
 newtype Player = Player T.Text
   deriving (Show)
 
-data Arrow = One | Two | Three | Four
+data Arrow = Arrow T.Text Point Point
   deriving (Show)
-  
-
--- hard code the coordinates of begin and end point of the arrows here
-getPoints :: Arrow -> (Point, Point)
-getPoints a =
-  let scale' = int2Float . scale
-      sp ((p1, p2), (p3, p4)) = ((scale' p1, scale' p2), (scale' p3, scale' p4))
-   in case a of
-        One -> sp ((800, 1100), (800, 300))
-        Two -> sp ((200, 300), (400, 200))
-        Three -> sp ((200, 500), (500, 300))
-        Four -> sp ((400, 1200), (500, 700))
-
-start :: Arrow -> Point
-start = fst . getPoints
-
-end :: Arrow -> Point
-end = snd . getPoints
 
 data Movement = Movement
   { player :: Player,
@@ -197,11 +205,11 @@ data Movement = Movement
   }
   deriving (Show)
 
-mkMovement :: Arrow -> Int -> Int-> Movement
-mkMovement a beginT endT = Movement {player = Player "One", arrow = a, startTime = if beginT > endT then endT else beginT, endTime = endT}
+start :: Arrow -> Point
+start (Arrow _ s _) = scalePoint s
 
-exampleAnimation :: [Movement]
-exampleAnimation = [mkMovement One 1 6, mkMovement Two 0 10, mkMovement Three 0 3, mkMovement Four 0 5]
+end :: Arrow -> Point
+end (Arrow _ _ e) = scalePoint e
 
 -- Difference between 2 points
 diff :: Point -> Point -> Point
