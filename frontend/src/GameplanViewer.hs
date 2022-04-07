@@ -7,6 +7,7 @@ module GameplanViewer (example, render, PlayerMovement (..), Player (..), Arrow 
 
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Time as Time
 import GHC.Float (float2Int, int2Float)
@@ -16,7 +17,7 @@ import Prelude
 -- Terminology
 -- Animation = a set of 'movements' 
 -- Movement = description of the movement over time of some object on the screen
--- Frame = the position of an object on the screen, described as a Point or a dynamic attr map (that can be given to an svg)
+-- Frame = the position of an object on the screen, described as a Dynamic (Map Text Text) that can be mapped on a svg
 
 
 -------------------
@@ -28,7 +29,7 @@ example = do
   let mkMovement a beginT endT = PlayerMovement {player = Player "One", arrow = a, startTime = if beginT > endT then endT else beginT, endTime = endT}
   let exampleAnimation =
         Animation
-          { ball = [],
+          { ball = [(Player "One", 0, 10)],
             players =
               [ mkMovement (Arrow "" (800, 1100) (800, 300)) 1 6,
                 mkMovement (Arrow "" (200, 300) (400, 200)) 0 10,
@@ -55,18 +56,20 @@ render animation = do
 
   rec -- initialise timer
       t0 <- liftIO Time.getCurrentTime
-      eTick <- tickLossy (1 / fromRational (toRational fps)) t0
+      eTick <- tickLossy (1 / fromRational (toRational framesPerSecond)) t0
 
       -- get the arrows and render the movements
       let arrows = map arrow playerMovements
-      renderedPlayerMovements <- mapM (renderMovement fps eStart ePause eReset eTick . getPlayerFrameAt) playerMovements
+      playerMovementFrames <- mapM (renderMovement eStart ePause eReset eTick . getPlayerFrameAt) playerMovements
+      ballMovementFrames <- renderMovement eStart ePause eReset eTick $ getBallFrameAt animation
 
       -- draw the BBalCourt, arrows and the player animations
       rowCenter $ do
         colCenter 12 $ do
           drawSvgBody viewWidth viewHeight $ do
             mapM_ drawArrow arrows
-            mapM_ (\m -> elDynSvgAttr "circle" m blank) renderedPlayerMovements
+            mapM_ (\m -> elDynSvgAttr "circle" m blank) playerMovementFrames
+            elDynSvgAttr "circle" ballMovementFrames blank
           drawBBCourt viewWidth viewHeight
 
       -- draw the start, pause and reset button
@@ -82,11 +85,11 @@ render animation = do
   blank
 
 -- creates 1 dynamic map linked to the ticks and start& reset button
-renderMovement :: (DomBuilder t m, MonadWidget t m) => Int -> Event t () -> Event t () -> Event t () -> Event t TickInfo -> RenderFrame -> m (Dynamic t (Map.Map T.Text T.Text))
-renderMovement framesPerSecond eStart ePause eReset eTick getFrame = do
+renderMovement :: (DomBuilder t m, MonadWidget t m) =>  Event t () -> Event t () -> Event t () -> Event t TickInfo -> RenderFrame -> m (Dynamic t (Map.Map T.Text T.Text))
+renderMovement eStart ePause eReset eTick getFrame = do
   beStartStop <- hold never . leftmost $ [((1 +) <$ eTick) <$ eStart, ((0 +) <$ eTick) <$ ePause, (const 0 <$ eTick) <$ eReset]
   let eSwitch = switch beStartStop
-  fmap (getFrame framesPerSecond) <$> foldDyn ($) 0 eSwitch
+  fmap getFrame <$> foldDyn ($) 0 eSwitch
 
 
 ----------------------------
@@ -156,8 +159,8 @@ bbalColor = "Brown"
 arrowWidth :: Width
 arrowWidth = scale 7
 
-fps :: Int
-fps = 30
+framesPerSecond :: Int
+framesPerSecond = 30
 
 -- using elDynAttrNS' to build svg in prerender (https://github.com/obsidiansystems/obelisk/issues/828)
 elDynSvgAttr ::
@@ -192,6 +195,9 @@ toText = T.pack . show
 playerAttr :: Point -> Map.Map T.Text T.Text
 playerAttr = circleAttr playerColor playerWidth
 
+ballAttr :: Point -> Map.Map T.Text  T.Text
+ballAttr = circleAttr bbalColor bbalWidth
+
 circleAttr :: Color -> Int -> Point -> Map.Map T.Text T.Text
 circleAttr color r (x, y) = "cx" =: toText x <> "cy" =: toText y <> "r" =: toText r <> "fill" =: color
 
@@ -200,15 +206,13 @@ circleAttr color r (x, y) = "cx" =: toText x <> "cy" =: toText y <> "r" =: toTex
 -------------------------
 type Seconds = Int
 
-type FPS = Int
-
--- a function that given the fps and 'tick' should return the right frame
-type RenderFrame = FPS -> Int -> Map.Map T.Text T.Text
+-- a function that given the framesPerSecond and 'tick' should return the right frame
+type RenderFrame =  Int -> Map.Map T.Text T.Text
 
 type Point = (Float, Float)
 
 newtype Player = Player T.Text
-  deriving (Show)
+  deriving (Show, Eq, Ord)
 
 data Arrow = Arrow T.Text Point Point
   deriving (Show)
@@ -243,25 +247,65 @@ divPoint :: Point -> Int -> Point
 divPoint (x, y) n = let n' = int2Float n in (x / n', y / n')
 
 -- return stepsize given the n of frames a movement takes
-stepSize :: PlayerMovement -> Int -> Point
-stepSize getFrame travTime = diff (start (arrow getFrame)) (end (arrow getFrame)) `divPoint` travTime
+stepSize :: Point -> Point -> Int -> Point
+stepSize startP endP travTime = diff (startP) (endP) `divPoint` travTime
 
 -- calculates a list of position on x and y axes of circle at each tick
 -- from it's starting frame to it's end frame with the given frames per second
-computePlayerPositions :: PlayerMovement -> Int -> [Point]
-computePlayerPositions getFrame framesPerSecond =
-  let stationaryFrames = replicate (startTime getFrame * framesPerSecond) (start $ arrow getFrame)
-      nOfFrames = ((endTime getFrame - startTime getFrame) * framesPerSecond) - 2 -- leave 2 frames for begin and end frame
-      (xStart, yStart) = start (arrow getFrame)
-      (xStep, yStep) = stepSize getFrame nOfFrames
-   in stationaryFrames ++ [(xStart + i * xStep, yStart + yStep * i) | i <- [0 .. (int2Float nOfFrames)]] ++ [end (arrow getFrame)]
+computePlayerPositions :: PlayerMovement -> [Point]
+computePlayerPositions mov =
+  let stationaryFrames = replicate (startTime mov * framesPerSecond) (start $ arrow mov)
+      nOfFrames = ((endTime mov - startTime mov) * framesPerSecond) - 2 -- leave 2 frames for begin and end frame
+      (xStart, yStart) = start (arrow mov)
+      (xStep, yStep) = stepSize (start $ arrow mov) (end $ arrow mov) nOfFrames
+   in stationaryFrames ++ [(xStart + i * xStep, yStart + yStep * i) | i <- [0 .. (int2Float nOfFrames)]] ++ [end (arrow mov)]
+
+-- computes 1 throw, catch and subsequent movement of ball with catching player
+computeThrowCatchPositions :: Point -> PlayerMovement -> Seconds -> Seconds -> Seconds -> [Point] 
+computeThrowCatchPositions startP@(xStart, yStart) toMov startThrow startMov endMov =
+  let 
+    toFr m = framesPerSecond * m
+    toPositions = drop (toFr startMov) $ take (toFr endMov) $ computePlayerPositions toMov -- take the frames the ball moves with this player
+
+    throwFrames = max 0 ((startMov- startThrow) * framesPerSecond - 2) 
+    (xStep, yStep) = stepSize startP (head toPositions) throwFrames
+  in startP : [(xStart + i * xStep, yStart + yStep * i) | i <- [0 .. (int2Float throwFrames)]] ++ toPositions
+
+
+transform :: BallMovement -> [(PlayerMovement, Seconds, Seconds, Seconds)]
+transform ballMov = undefined 
+
+folt :: (PlayerMovement, Seconds, Seconds, Seconds) -> (Point, PlayerMovement, Seconds, Seconds, Seconds) -> (Point, PlayerMovement, Seconds, Seconds, Seconds) 
+folt = undefined 
+
+
+computeBallPositions :: Animation  -> [Point]
+computeBallPositions animation  =
+  let
+    playersWithBall = map (\(a,_,_) -> a) (ball animation)
+    movementsWithBall = filter (\mov -> player mov `elem` playersWithBall) (players animation)
+    playerAndPositions = Map.fromList $ map (\mov -> (player mov,  mov)) movementsWithBall
+
+    otherPositions = foldr
+
+    addOffset a (x,y) = (x + a, y)
+
+    -- always let ball start with the first player that receives it
+    endOfFirstMovement = (\(_,_,a) -> a) $ head (ball animation)
+    firstBallPositions = take (framesPerSecond * endOfFirstMovement) $ computePlayerPositions $ head movementsWithBall
+
+
+  in map (addOffset 15) (firstBallPositions)
 
 -- Calculate attributes of circle representing player at given frame
-getPlayerFrameAt :: PlayerMovement -> Int -> Int -> Map.Map T.Text T.Text
-getPlayerFrameAt mov framesPerSecond frameN =
-  let allFrames = computePlayerPositions mov framesPerSecond
-      currFrame = if length allFrames > frameN then allFrames !! frameN else last allFrames
-   in playerAttr currFrame
+getFrameAt :: [Point]-> (Point -> Map.Map T.Text T.Text) ->  Int -> Map.Map T.Text T.Text
+getFrameAt allPositions drawP frameN =
+  let currPosition = if length allPositions > frameN then allPositions !! frameN else last allPositions
+   in drawP currPosition
 
-getBallFrameAt :: Animation -> Int -> Int -> Map.Map T.Text T.Text 
-getBallFrameAt animation framesPerSecond frameN = undefined 
+getPlayerFrameAt :: PlayerMovement -> Int -> Map.Map T.Text T.Text
+getPlayerFrameAt mov = getFrameAt (computePlayerPositions mov) playerAttr
+
+
+getBallFrameAt :: Animation -> Int ->  Map.Map T.Text T.Text
+getBallFrameAt animation = getFrameAt (computeBallPositions animation) ballAttr
